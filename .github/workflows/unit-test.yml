@@ -1,10 +1,6 @@
 name: Unit Tests
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-  merge_group:
+  workflow_dispatch:
 
 jobs:
   node-tests:
@@ -19,6 +15,7 @@ jobs:
           - "22"
           - "23"
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     env:
       NPM_CONFIG_UNSAFE_PERM: true
     steps:
@@ -41,7 +38,7 @@ jobs:
           matrix.node_version == '18' ||
           matrix.node_version == '20.6.0'
           }}
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@11.3.0
         if: ${{
           matrix.node_version == '20' ||
           matrix.node_version == '22' ||
@@ -54,23 +51,40 @@ jobs:
       - name: Build 🔧
         run: npm run compile
 
-      - run: npm test
-        if: ${{ matrix.node_version != '23' }}
+      - if: ${{ matrix.node_version != '22' && matrix.node_version != '23' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.log
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /[0-9]+ passing/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[1]; n++} END {printf "TEST SUMMARY: %d tests passing across %d mocha suites\n", s, n}'
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /[0-9]+ failing/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[1]} END {printf "TEST SUMMARY: %d tests failing\n", s}'
       # Node.js 23 type stripping conflicts with mocha usage of ts-node.
       # See https://github.com/open-telemetry/opentelemetry-js/issues/5415
-      - run: npm test
-        env:
+      - env:
           NODE_OPTIONS: '--no-experimental-strip-types'
-        if: ${{ matrix.node_version == '23' }}
-
-      - name: Report Coverage
-        uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: ${{ matrix.node_version == '22' || matrix.node_version == '23' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.log
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /[0-9]+ passing/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[1]; n++} END {printf "TEST SUMMARY: %d tests passing across %d mocha suites\n", s, n}'
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /[0-9]+ failing/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[1]} END {printf "TEST SUMMARY: %d tests failing\n", s}'
+      - name: Pack @opentelemetry/exporter-prometheus
+        if: ${{ matrix.node_version == '18' }}
+        run: |
+          mkdir -p dist-pack
+          npm pack --ignore-scripts --workspace=experimental/packages/opentelemetry-exporter-prometheus --pack-destination=dist-pack
+          mv dist-pack/opentelemetry-exporter-prometheus-0.200.0.tgz dist-pack/exporter-prometheus-0.200.0.tgz
+      - name: Upload exporter-prometheus tarball
+        if: ${{ matrix.node_version == '18' }}
+        uses: actions/upload-artifact@v4
         with:
-          verbose: true
+          name: exporter-prometheus-tgz
+          path: dist-pack/exporter-prometheus-0.200.0.tgz
+          if-no-files-found: error
   node-windows-tests:
     runs-on: windows-latest
+    timeout-minutes: 50
     env:
       NPM_CONFIG_UNSAFE_PERM: true
     steps:
@@ -84,7 +98,7 @@ jobs:
             package-lock.json
           node-version: '20'
 
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@11.3.0
 
       - name: Bootstrap
         run: npm ci
@@ -95,9 +109,15 @@ jobs:
           npm run compile
 
       - name: Unit tests
-        run: npm run test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test 2>&1 | tee test-output.log
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /[0-9]+ passing/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[1]; n++} END {printf "TEST SUMMARY: %d tests passing across %d mocha suites\n", s, n}'
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /[0-9]+ failing/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[1]} END {printf "TEST SUMMARY: %d tests failing\n", s}'
   browser-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     env:
       NPM_CONFIG_UNSAFE_PERM: true
     steps:
@@ -118,15 +138,14 @@ jobs:
         run: npm run compile
 
       - name: Unit tests
-        run: npm run test:browser
-      - name: Report Coverage
-        uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        with:
-          verbose: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:browser 2>&1 | tee test-output.log
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /Executed [0-9]+ of [0-9]+.*SUCCESS \(/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[2]; t+=a[4]; n++} END {printf "TEST SUMMARY: %d of %d tests executed successfully across %d karma suites\n", s, t, n}'
   webworker-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     env:
       NPM_CONFIG_UNSAFE_PERM: true
     steps:
@@ -146,10 +165,8 @@ jobs:
         run: npm run compile
 
       - name: Unit tests
-        run: npm run test:webworker
-      - name: Report Coverage
-        uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        with:
-          verbose: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:webworker 2>&1 | tee test-output.log
+          sed 's/\x1b\[[0-9;]*m//g' test-output.log | awk 'match($0, /Executed [0-9]+ of [0-9]+.*SUCCESS \(/) {split(substr($0, RSTART, RLENGTH), a, " "); s+=a[2]; t+=a[4]; n++} END {printf "TEST SUMMARY: %d of %d tests executed successfully across %d karma suites\n", s, t, n}'
